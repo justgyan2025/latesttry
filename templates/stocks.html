@@ -1,0 +1,514 @@
+{% extends 'base.html' %}
+
+{% block title %}Stocks{% endblock %}
+
+{% block head %}
+<!-- Add any additional CSS -->
+<style>
+    /* Add any custom styles if needed */
+    .backdrop-blur-lg {
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8 p-6 bg-gray-50 min-h-screen">
+    <!-- Combined Family Portfolio Summary -->
+    <div class="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-2xl shadow-xl p-8 text-white transform hover:scale-[1.02] transition-all duration-300">
+        <h2 class="text-2xl font-bold mb-6 flex items-center">
+            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Combined Family Portfolio
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div class="bg-white/10 rounded-xl p-6 backdrop-blur-lg">
+                <p class="text-purple-100 text-sm font-medium">Total Family Investment</p>
+                <h3 class="text-3xl font-bold mt-2" id="totalFamilyInvestment">₹0</h3>
+            </div>
+            <div class="bg-white/10 rounded-xl p-6 backdrop-blur-lg">
+                <p class="text-purple-100 text-sm font-medium">Total Family Value</p>
+                <h3 class="text-3xl font-bold mt-2" id="totalFamilyValue">₹0</h3>
+            </div>
+            <div class="bg-white/10 rounded-xl p-6 backdrop-blur-lg">
+                <p class="text-purple-100 text-sm font-medium">Total Family P/L</p>
+                <h3 class="text-3xl font-bold mt-2" id="totalFamilyPL">₹0</h3>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
+        <div class="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
+            <h1 class="text-2xl font-bold text-gray-800">Stocks Portfolio</h1>
+            <select id="familyMemberSelect" class="px-4 py-2 rounded-lg border-2 border-gray-200 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 bg-white shadow-sm transition-all duration-300">
+                <option value="self">My Portfolio</option>
+                <option value="father">Father's Portfolio</option>
+                <option value="mother">Mother's Portfolio</option>
+                <option value="spouse">Spouse's Portfolio</option>
+                <option value="sibling">Sibling's Portfolio</option>
+            </select>
+        </div>
+        <button onclick="openAddStockModal()" class="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            Add Stock
+        </button>
+    </div>
+
+    <!-- Individual Portfolio Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Total Investment Card -->
+        <div class="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-300 hover:scale-105 border border-gray-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm font-medium">Total Investment</p>
+                    <h3 class="text-3xl font-bold mt-2 text-gray-800" id="totalInvestment">₹0</h3>
+                </div>
+                <div class="bg-indigo-100 p-4 rounded-full">
+                    <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Value Card -->
+        <div class="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-300 hover:scale-105 border border-gray-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm font-medium">Current Value</p>
+                    <h3 class="text-3xl font-bold mt-2 text-gray-800" id="currentValue">₹0</h3>
+                </div>
+                <div class="bg-green-100 p-4 rounded-full">
+                    <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total P/L Card -->
+        <div class="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-300 hover:scale-105 border border-gray-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm font-medium">Total P/L</p>
+                    <h3 class="text-3xl font-bold mt-2" id="totalPL">₹0</h3>
+                </div>
+                <div class="bg-yellow-100 p-4 rounded-full">
+                    <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stocks List -->
+    <div class="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Stock Symbol</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Stock Name</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Quantity</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Buy Price</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Current Price</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">P/L</th>
+                        <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="stocksTableBody" class="bg-white divide-y divide-gray-200">
+                    <!-- Stocks will be populated here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Stock Modal -->
+<div id="stockModal" class="hidden fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm overflow-y-auto h-full w-full z-50">
+    <div class="relative top-20 mx-auto p-8 border w-[32rem] shadow-2xl rounded-2xl bg-white">
+        <div class="absolute top-4 right-4">
+            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 transition-colors duration-200">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="mt-2">
+            <h3 class="text-2xl font-bold text-gray-900 mb-6" id="modalTitle">Add Stock</h3>
+            <form id="stockForm" class="space-y-6">
+                <input type="hidden" id="stockId">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Stock Symbol (NSE)</label>
+                    <div class="flex space-x-3">
+                        <input type="text" id="stockSymbol" required placeholder="e.g., RELIANCE, TCS, INFY"
+                               class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition-all duration-300">
+                        <button type="button" onclick="fetchStockInfo()"
+                                class="px-6 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all duration-300 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                            Fetch
+                        </button>
+                    </div>
+                    <p class="mt-2 text-sm text-gray-500">Enter NSE stock symbol without .NS suffix</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Stock Name</label>
+                    <input type="text" id="stockName" required readonly
+                           class="w-full rounded-lg border-2 border-gray-200 px-4 py-2.5 bg-gray-50">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
+                        <input type="number" id="quantity" required min="1"
+                               class="w-full rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition-all duration-300">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Buy Price</label>
+                        <input type="number" id="buyPrice" required min="0" step="0.01"
+                               class="w-full rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 transition-all duration-300">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Current Price</label>
+                    <input type="number" id="currentPrice" required min="0" step="0.01" readonly
+                           class="w-full rounded-lg border-2 border-gray-200 px-4 py-2.5 bg-gray-50">
+                </div>
+                <div class="flex justify-end space-x-4 mt-8">
+                    <button type="button" onclick="closeModal()"
+                            class="px-6 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all duration-300">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                            class="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-lg hover:shadow-xl transition-all duration-300">
+                        Save
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Firebase Scripts -->
+<script type="module">
+    import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js";
+
+    // Make Firebase functions available globally
+    window.firebaseUtils = {
+        collection,
+        addDoc,
+        getDocs,
+        doc,
+        updateDoc,
+        deleteDoc,
+        getDoc
+    };
+
+    // Get reference to the stocks collection
+    const stocksCollection = collection(window.db, "stocks");
+    window.stocksCollection = stocksCollection;
+
+    // Function to load stocks from Firestore
+    async function loadStocks() {
+        try {
+            const selectedMember = document.getElementById('familyMemberSelect').value;
+            const querySnapshot = await getDocs(stocksCollection);
+            const stocksTableBody = document.getElementById('stocksTableBody');
+            stocksTableBody.innerHTML = '';
+
+            let totalInvestment = 0;
+            let currentValue = 0;
+
+            querySnapshot.forEach((doc) => {
+                const stock = doc.data();
+                // Only show stocks for the selected family member
+                if (stock.familyMember === selectedMember) {
+                    const investment = stock.buyPrice * stock.quantity;
+                    const value = stock.currentPrice * stock.quantity;
+                    const pl = value - investment;
+                    
+                    totalInvestment += investment;
+                    currentValue += value;
+
+                    const row = `
+                        <tr data-id="${doc.id}" data-symbol="${stock.symbol}" class="hover:bg-gray-50 transition-colors duration-200">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${stock.symbol}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${stock.stockName}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${stock.quantity}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">₹${stock.buyPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 current-price">₹${stock.currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                ${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                <button onclick="editStock('${doc.id}')" class="text-indigo-600 hover:text-indigo-900 mr-3 transition-colors duration-200">Edit</button>
+                                <button onclick="deleteStock('${doc.id}')" class="text-red-600 hover:text-red-900 transition-colors duration-200">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                    stocksTableBody.innerHTML += row;
+                }
+            });
+
+            // Update summary cards
+            document.getElementById('totalInvestment').textContent = `₹${totalInvestment.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            document.getElementById('currentValue').textContent = `₹${currentValue.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            
+            const totalPL = currentValue - totalInvestment;
+            const plElement = document.getElementById('totalPL');
+            plElement.textContent = `${totalPL >= 0 ? '+' : ''}₹${totalPL.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            plElement.className = `text-3xl font-bold mt-2 ${totalPL >= 0 ? 'text-green-600' : 'text-red-600'}`;
+
+        } catch (error) {
+            console.error("Error loading stocks: ", error);
+            alert("Error loading stocks. Please try again.");
+        }
+    }
+
+    // Function to update current prices
+    async function updateCurrentPrices() {
+        try {
+            const rows = document.querySelectorAll('#stocksTableBody tr');
+            for (const row of rows) {
+                const symbol = row.getAttribute('data-symbol');
+                if (!symbol) continue;
+
+                const response = await fetch(`/get_stock_info?symbol=${symbol}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    const currentPriceCell = row.querySelector('.current-price');
+                    const plCell = row.querySelector('.pl-value');
+                    
+                    if (currentPriceCell && plCell) {
+                        const currentPrice = data.currentPrice;
+                        const buyPrice = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('₹', '').replace(/,/g, ''));
+                        const quantity = parseInt(row.querySelector('td:nth-child(3)').textContent);
+                        const pl = (currentPrice - buyPrice) * quantity;
+
+                        currentPriceCell.textContent = `₹${currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                        plCell.textContent = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                        plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
+                    }
+                }
+            }
+
+            // Update summary after price updates
+            await updatePortfolioSummary();
+            await updateFamilyPortfolioSummary();
+        } catch (error) {
+            console.error("Error updating prices: ", error);
+        }
+    }
+
+    // Function to update portfolio summary
+    async function updatePortfolioSummary() {
+        try {
+            const selectedMember = document.getElementById('familyMemberSelect').value;
+            const querySnapshot = await getDocs(stocksCollection);
+            let totalInvestment = 0;
+            let currentValue = 0;
+
+            querySnapshot.forEach((doc) => {
+                const stock = doc.data();
+                // Only include stocks for the selected family member
+                if (stock.familyMember === selectedMember) {
+                    totalInvestment += stock.buyPrice * stock.quantity;
+                    currentValue += stock.currentPrice * stock.quantity;
+                }
+            });
+
+            const totalPL = currentValue - totalInvestment;
+            const plPercentage = (totalPL / totalInvestment) * 100;
+
+            // Update the cards with formatted values
+            document.getElementById('totalInvestment').textContent = `₹${totalInvestment.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            document.getElementById('currentValue').textContent = `₹${currentValue.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            
+            const plElement = document.getElementById('totalPL');
+            plElement.textContent = `${totalPL >= 0 ? '+' : ''}₹${totalPL.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            plElement.className = `text-2xl font-bold mt-1 ${totalPL >= 0 ? 'text-green-600' : 'text-red-600'}`;
+        } catch (error) {
+            console.error("Error updating portfolio summary: ", error);
+        }
+    }
+
+    // Function to update family portfolio summary
+    async function updateFamilyPortfolioSummary() {
+        try {
+            const querySnapshot = await getDocs(stocksCollection);
+            let totalFamilyInvestment = 0;
+            let totalFamilyValue = 0;
+
+            querySnapshot.forEach((doc) => {
+                const stock = doc.data();
+                // Calculate investment and value for each stock
+                const investment = stock.buyPrice * stock.quantity;
+                const currentValue = stock.currentPrice * stock.quantity;
+                
+                // Add to family totals
+                totalFamilyInvestment += investment;
+                totalFamilyValue += currentValue;
+            });
+
+            const totalFamilyPL = totalFamilyValue - totalFamilyInvestment;
+            const plPercentage = totalFamilyInvestment > 0 ? (totalFamilyPL / totalFamilyInvestment) * 100 : 0;
+
+            // Update the family portfolio cards with formatted values
+            document.getElementById('totalFamilyInvestment').textContent = `₹${totalFamilyInvestment.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            document.getElementById('totalFamilyValue').textContent = `₹${totalFamilyValue.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            
+            const plElement = document.getElementById('totalFamilyPL');
+            plElement.textContent = `${totalFamilyPL >= 0 ? '+' : ''}₹${totalFamilyPL.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            plElement.className = `text-2xl font-bold mt-1 ${totalFamilyPL >= 0 ? 'text-green-400' : 'text-red-400'}`;
+        } catch (error) {
+            console.error("Error updating family portfolio summary: ", error);
+        }
+    }
+
+    // Make loadStocks, updateCurrentPrices, updatePortfolioSummary, and updateFamilyPortfolioSummary available globally
+    window.loadStocks = loadStocks;
+    window.updateCurrentPrices = updateCurrentPrices;
+    window.updatePortfolioSummary = updatePortfolioSummary;
+    window.updateFamilyPortfolioSummary = updateFamilyPortfolioSummary;
+
+    // Load stocks when page loads
+    document.addEventListener('DOMContentLoaded', () => {
+        loadStocks();
+        // Set up auto-refresh every minute
+        setInterval(updateCurrentPrices, 60000);
+    });
+
+    // Add event listener for family member selection
+    document.getElementById('familyMemberSelect').addEventListener('change', loadStocks);
+</script>
+
+<script>
+    const modal = document.getElementById('stockModal');
+    const stockForm = document.getElementById('stockForm');
+    let isEditing = false;
+
+    // Fetch stock information
+    window.fetchStockInfo = async function() {
+        const symbol = document.getElementById('stockSymbol').value.trim();
+        if (!symbol) {
+            alert('Please enter a stock symbol');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/get_stock_info?symbol=${symbol}`);
+            const data = await response.json();
+
+            if (response.ok) {
+                document.getElementById('stockName').value = data.name;
+                document.getElementById('currentPrice').value = data.currentPrice;
+            } else {
+                alert(data.error || 'Error fetching stock information');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error fetching stock information');
+        }
+    }
+
+    // Open modal for adding new stock
+    window.openAddStockModal = function() {
+        document.getElementById('modalTitle').textContent = 'Add Stock';
+        document.getElementById('stockId').value = '';
+        document.getElementById('stockSymbol').readOnly = false;
+        stockForm.reset();
+        isEditing = false;
+        modal.classList.remove('hidden');
+    }
+
+    // Open modal for editing stock
+    window.editStock = async function(stockId) {
+        try {
+            const stockDoc = await window.firebaseUtils.getDoc(window.firebaseUtils.doc(window.db, "stocks", stockId));
+            const stock = stockDoc.data();
+            
+            document.getElementById('modalTitle').textContent = 'Edit Stock';
+            document.getElementById('stockId').value = stockId;
+            document.getElementById('stockSymbol').value = stock.symbol;
+            document.getElementById('stockSymbol').readOnly = true;
+            document.getElementById('stockName').value = stock.stockName;
+            document.getElementById('quantity').value = stock.quantity;
+            document.getElementById('buyPrice').value = stock.buyPrice;
+            document.getElementById('currentPrice').value = stock.currentPrice;
+            
+            isEditing = true;
+            modal.classList.remove('hidden');
+        } catch (error) {
+            console.error("Error loading stock for edit: ", error);
+            alert("Error loading stock details. Please try again.");
+        }
+    }
+
+    // Delete stock
+    window.deleteStock = async function(stockId) {
+        if (confirm('Are you sure you want to delete this stock?')) {
+            try {
+                await window.firebaseUtils.deleteDoc(window.firebaseUtils.doc(window.db, "stocks", stockId));
+                await loadStocks();
+                await updatePortfolioSummary();
+                await updateFamilyPortfolioSummary();
+            } catch (error) {
+                console.error("Error deleting stock: ", error);
+                alert("Error deleting stock. Please try again.");
+            }
+        }
+    }
+
+    // Close modal
+    window.closeModal = function() {
+        modal.classList.add('hidden');
+        stockForm.reset();
+    }
+
+    // Handle form submission
+    stockForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const stockData = {
+            symbol: document.getElementById('stockSymbol').value.trim(),
+            stockName: document.getElementById('stockName').value,
+            quantity: parseInt(document.getElementById('quantity').value),
+            buyPrice: parseFloat(document.getElementById('buyPrice').value),
+            currentPrice: parseFloat(document.getElementById('currentPrice').value),
+            familyMember: document.getElementById('familyMemberSelect').value
+        };
+
+        try {
+            if (isEditing) {
+                const stockId = document.getElementById('stockId').value;
+                await window.firebaseUtils.updateDoc(
+                    window.firebaseUtils.doc(window.db, "stocks", stockId),
+                    stockData
+                );
+            } else {
+                await window.firebaseUtils.addDoc(window.stocksCollection, stockData);
+            }
+            
+            closeModal();
+            await loadStocks();
+        } catch (error) {
+            console.error("Error saving stock: ", error);
+            alert("Error saving stock. Please try again.");
+        }
+    });
+
+    // Handle click outside modal to close
+    window.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+</script>
+{% endblock %}

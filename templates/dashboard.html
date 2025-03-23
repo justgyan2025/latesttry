@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2>Financial Dashboard</h2>
+        <p class="lead">Welcome, {{ session.user.name }}!</p>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Stocks</h5>
+                <p class="card-text">Track your stock investments and monitor their performance.</p>
+                <a href="{{ url_for('stocks') }}" class="btn btn-primary">View Stocks</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Mutual Funds</h5>
+                <p class="card-text">Track your mutual fund investments and their NAV.</p>
+                <a href="{{ url_for('mutual_funds') }}" class="btn btn-primary">View Mutual Funds</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Insurance</h5>
+                <p class="card-text">Manage your insurance policies and premium details.</p>
+                <a href="{{ url_for('insurance') }}" class="btn btn-primary">View Insurance</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

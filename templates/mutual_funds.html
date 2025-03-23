@@ -1,0 +1,241 @@
+{% extends 'base.html' %}
+
+{% block title %}Mutual Funds{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-6">
+        <h2>Mutual Fund Portfolio</h2>
+    </div>
+    <div class="col-md-6 text-end">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addMutualFundModal">
+            Add Mutual Fund
+        </button>
+    </div>
+</div>
+
+<div id="loading" class="text-center py-5">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="mt-2">Loading mutual funds data...</p>
+</div>
+
+<div id="funds-container" style="display: none;">
+    <div id="no-funds" class="alert alert-info" style="display: none;">
+        You haven't added any mutual funds yet. Click the "Add Mutual Fund" button to get started.
+    </div>
+    
+    <div id="funds-table" class="table-responsive" style="display: none;">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Scheme Code</th>
+                    <th>Scheme Name</th>
+                    <th>NAV</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="funds-body">
+                <!-- Mutual funds will be loaded here via JavaScript -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Mutual Fund Modal -->
+<div class="modal fade" id="addMutualFundModal" tabindex="-1" aria-labelledby="addMutualFundModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addMutualFundModalLabel">Add Mutual Fund</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="add-fund-form">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="scheme_code" class="form-label">Scheme Code</label>
+                        <input type="text" class="form-control" id="scheme_code" name="scheme_code" required>
+                        <div class="form-text">Enter the mutual fund scheme code (e.g., 119598, 118989)</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Mutual Fund</button>
+                </div>
+                </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Wait for Firebase to be initialized
+    document.addEventListener('firebaseReady', function() {
+        const fundsCollection = getUserCollection('mutual_funds');
+        loadMutualFunds();
+        
+        // Handle add mutual fund form submission
+        document.getElementById('add-fund-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const schemeCode = document.getElementById('scheme_code').value.trim();
+            
+            if (schemeCode) {
+                addMutualFund(schemeCode);
+                // Close the modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('addMutualFundModal'));
+                modal.hide();
+            }
+        });
+        
+        // Function to add a mutual fund
+        function addMutualFund(schemeCode) {
+            // First validate the scheme code using mfapi.in
+            fetch(`https://api.mfapi.in/mf/${schemeCode}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data && data.status === 'SUCCESS') {
+                    // Add to Firestore
+                    fundsCollection.doc(schemeCode).set({
+                        scheme_code: schemeCode,
+                        added_at: firebase.firestore.FieldValue.serverTimestamp()
+                    })
+                    .then(() => {
+                        console.log("Mutual fund added successfully!");
+                        loadMutualFunds();
+                    })
+                    .catch(error => {
+                        console.error("Error adding mutual fund to Firestore:", error);
+                        alert("Error adding mutual fund. Please try again.");
+                    });
+                } else {
+                    alert("Invalid scheme code. Please check and try again.");
+                }
+            })
+            .catch(error => {
+                console.error("Error validating mutual fund:", error);
+                alert("Error validating scheme code. Please try again.");
+            });
+        }
+        
+        // Function to delete a mutual fund
+        function deleteMutualFund(schemeCode) {
+            fundsCollection.doc(schemeCode).delete()
+            .then(() => {
+                console.log("Mutual fund deleted successfully!");
+                loadMutualFunds();
+            })
+            .catch(error => {
+                console.error("Error deleting mutual fund:", error);
+                alert("Error removing mutual fund. Please try again.");
+            });
+        }
+        
+        // Function to load mutual funds
+        function loadMutualFunds() {
+            const loadingEl = document.getElementById('loading');
+            const fundsContainerEl = document.getElementById('funds-container');
+            const noFundsEl = document.getElementById('no-funds');
+            const fundsTableEl = document.getElementById('funds-table');
+            const fundsBodyEl = document.getElementById('funds-body');
+            
+            loadingEl.style.display = 'block';
+            fundsContainerEl.style.display = 'none';
+            
+            fundsCollection.get()
+            .then(snapshot => {
+                loadingEl.style.display = 'none';
+                fundsContainerEl.style.display = 'block';
+                
+                if (snapshot.empty) {
+                    noFundsEl.style.display = 'block';
+                    fundsTableEl.style.display = 'none';
+                    return;
+                }
+                
+                noFundsEl.style.display = 'none';
+                fundsTableEl.style.display = 'block';
+                
+                // Clear existing funds
+                fundsBodyEl.innerHTML = '';
+                
+                // Get scheme codes
+                const schemeCodes = snapshot.docs.map(doc => doc.data().scheme_code);
+                
+                // Render placeholders
+                schemeCodes.forEach(schemeCode => {
+                    const row = document.createElement('tr');
+                    row.id = `fund-row-${schemeCode}`;
+                    row.innerHTML = `
+                        <td>${schemeCode}</td>
+                        <td>Loading...</td>
+                        <td>Loading...</td>
+                        <td>Loading...</td>
+                        <td>
+                            <button class="btn btn-sm btn-danger delete-fund" data-scheme-code="${schemeCode}">
+                                <i class="bi bi-trash"></i> Remove
+                            </button>
+                        </td>
+                    `;
+                    fundsBodyEl.appendChild(row);
+                });
+                
+                // Add event listeners for delete buttons
+                document.querySelectorAll('.delete-fund').forEach(button => {
+                    button.addEventListener('click', function() {
+                        const schemeCode = this.getAttribute('data-scheme-code');
+                        if (confirm(`Are you sure you want to remove this mutual fund from your portfolio?`)) {
+                            deleteMutualFund(schemeCode);
+                        }
+                    });
+                });
+                
+                // Fetch actual mutual fund data for each scheme code
+                schemeCodes.forEach(schemeCode => {
+                    fetch(`https://api.mfapi.in/mf/${schemeCode}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data && data.status === 'SUCCESS') {
+                            const row = document.getElementById(`fund-row-${schemeCode}`);
+                            if (row) {
+                                row.innerHTML = `
+                                    <td>${schemeCode}</td>
+                                    <td>${data.meta.scheme_name}</td>
+                                    <td>₹${data.data[0].nav}</td>
+                                    <td>${data.data[0].date}</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-danger delete-fund" data-scheme-code="${schemeCode}">
+                                            <i class="bi bi-trash"></i> Remove
+                                        </button>
+                                    </td>
+                                `;
+                                
+                                // Re-add event listener for delete button
+                                row.querySelector('.delete-fund').addEventListener('click', function() {
+                                    const schemeCodeToDelete = this.getAttribute('data-scheme-code');
+                                    if (confirm(`Are you sure you want to remove this mutual fund from your portfolio?`)) {
+                                        deleteMutualFund(schemeCodeToDelete);
+                                    }
+                                });
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error fetching mutual fund data for ${schemeCode}:`, error);
+                    });
+                });
+            })
+            .catch(error => {
+                console.error("Error loading mutual funds:", error);
+                loadingEl.style.display = 'none';
+                fundsContainerEl.style.display = 'block';
+                noFundsEl.textContent = 'Error loading mutual funds. Please try again later.';
+                noFundsEl.style.display = 'block';
+                fundsTableEl.style.display = 'none';
+            });
+        }
+    });
+</script>
+{% endblock %}
