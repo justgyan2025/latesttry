@@ -211,8 +211,9 @@
     };
 
     // Get reference to the stocks collection
-    const stocksCollection = collection(window.db, "stocks");
+    const stocksCollection = collection(window.firebaseApp.firestore(), "stocks");
     window.stocksCollection = stocksCollection;
+    window.db = window.firebaseApp.firestore(); // Make firestore db available globally
 
     // Rate limiting and caching utilities
     const CACHE_DURATION = 3600000; // 1 hour cache (increased from 1 minute)
@@ -225,6 +226,118 @@
     // Function to check if cache is valid
     function isCacheValid(cacheEntry) {
         return cacheEntry && (Date.now() - cacheEntry.timestamp) < CACHE_DURATION;
+    }
+
+    // Function to fetch stock information from Yahoo Finance directly on client side
+    window.fetchStockInfo = async function() {
+        const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+        if (!symbol) {
+            alert('Please enter a stock symbol');
+            return;
+        }
+
+        try {
+            // Show loading state
+            document.getElementById('stockName').value = "Loading...";
+            document.getElementById('currentPrice').value = "";
+            
+            // First try to get data from our static fallback stocks
+            const staticStockData = await fetch(`/api/stock-data?symbol=${symbol}&static_only=true&_t=${Date.now()}`);
+            if (staticStockData.ok) {
+                const data = await staticStockData.json();
+                if (data.success) {
+                    document.getElementById('stockName').value = data.company_name || `${symbol} Stock`;
+                    document.getElementById('currentPrice').value = data.current_price || 0;
+                    return;
+                }
+            }
+            
+            // If no static data, try Yahoo Finance API directly
+            await fetchYahooFinanceData(symbol);
+        } catch (error) {
+            console.error('Error fetching stock information:', error);
+            // Provide usable fallback values even on error
+            document.getElementById('stockName').value = `${symbol} Stock`;
+            document.getElementById('currentPrice').value = 0;
+        }
+    }
+
+    // Yahoo Finance direct API call function
+    async function fetchYahooFinanceData(symbol) {
+        try {
+            // First try with NSE extension
+            let yahooSymbol = `${symbol}.NS`;
+            let data = await tryYahooFinanceSymbol(yahooSymbol);
+            
+            // If NSE fails, try BSE
+            if (!data) {
+                yahooSymbol = `${symbol}.BO`;
+                data = await tryYahooFinanceSymbol(yahooSymbol);
+            }
+            
+            // If both fail, use default values
+            if (!data) {
+                document.getElementById('stockName').value = `${symbol} Stock`;
+                document.getElementById('currentPrice').value = 0;
+            }
+        } catch (error) {
+            console.error('Yahoo Finance API error:', error);
+            document.getElementById('stockName').value = `${symbol} Stock`;
+            document.getElementById('currentPrice').value = 0;
+        }
+    }
+
+    // Helper function to try a specific Yahoo Finance symbol
+    async function tryYahooFinanceSymbol(yahooSymbol) {
+        try {
+            // Use Yahoo Finance query API 
+            const queryParams = new URLSearchParams({
+                symbols: yahooSymbol,
+                fields: 'shortName,longName,regularMarketPrice,regularMarketChange,regularMarketChangePercent',
+                includeQuotes: 'true',
+            }).toString();
+            
+            // Use a CORS proxy to access Yahoo Finance
+            const proxyUrl = 'https://corsproxy.io/?';
+            const apiUrl = `https://query1.finance.yahoo.com/v7/finance/quote?${queryParams}`;
+            
+            const response = await fetch(proxyUrl + encodeURIComponent(apiUrl), {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Yahoo Finance API error: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.quoteResponse && 
+                result.quoteResponse.result && 
+                result.quoteResponse.result.length > 0) {
+                
+                const quote = result.quoteResponse.result[0];
+                
+                // Found valid data
+                const companyName = quote.longName || quote.shortName || yahooSymbol;
+                const price = quote.regularMarketPrice || 0;
+                
+                document.getElementById('stockName').value = companyName;
+                document.getElementById('currentPrice').value = price;
+                
+                return {
+                    success: true,
+                    company_name: companyName,
+                    current_price: price
+                };
+            }
+            
+            return null;
+        } catch (error) {
+            console.warn(`Failed to fetch data for ${yahooSymbol}:`, error);
+            return null;
+        }
     }
 
     // Function to get stock data with rate limiting and caching
@@ -254,23 +367,59 @@
                     }
 
                     try {
-                        // Adding a random query param to avoid caching
-                        const timestamp = Date.now();
-                        const response = await fetch(`/api/stock-data?symbol=${symbol}&_t=${timestamp}`);
-                        lastRequestTime = Date.now();
-
-                        if (!response.ok) {
-                            throw new Error(`Failed to fetch stock data: ${response.status}`);
+                        // First try fetching static data - this doesn't hit Yahoo API
+                        const staticResponse = await fetch(`/api/stock-data?symbol=${symbol}&static_only=true&_t=${Date.now()}`);
+                        if (staticResponse.ok) {
+                            const staticData = await staticResponse.json();
+                            if (staticData.success) {
+                                stockPriceCache.set(symbol, {
+                                    data: staticData,
+                                    timestamp: Date.now()
+                                });
+                                lastRequestTime = Date.now();
+                                resolve(staticData);
+                                return;
+                            }
+                        }
+                        
+                        // If no static data available, try Yahoo Finance API directly
+                        let yahooData = null;
+                        
+                        // Try with NSE extension first
+                        const yahooSymbol = `${symbol.split('.')[0]}.NS`;
+                        yahooData = await tryYahooFinanceSymbol(yahooSymbol);
+                        
+                        // If NSE fails, try BSE
+                        if (!yahooData) {
+                            const bseSymbol = `${symbol.split('.')[0]}.BO`;
+                            yahooData = await tryYahooFinanceSymbol(bseSymbol);
+                        }
+                        
+                        if (yahooData) {
+                            // Cache the result from Yahoo API
+                            stockPriceCache.set(symbol, {
+                                data: yahooData,
+                                timestamp: Date.now()
+                            });
+                            lastRequestTime = Date.now();
+                            resolve(yahooData);
+                            return;
+                        }
+                        
+                        // If all direct fetching fails, fall back to server API (which has more fallbacks)
+                        const fallbackResponse = await fetch(`/api/stock-data?symbol=${symbol}&_t=${Date.now()}`);
+                        if (!fallbackResponse.ok) {
+                            throw new Error(`Failed to fetch stock data: ${fallbackResponse.status}`);
                         }
 
-                        const data = await response.json();
+                        const data = await fallbackResponse.json();
                         
                         // Cache the result
                         stockPriceCache.set(symbol, {
                             data: data,
                             timestamp: Date.now()
                         });
-
+                        lastRequestTime = Date.now();
                         resolve(data);
                     } catch (error) {
                         console.error(`Error fetching data for ${symbol}:`, error);
@@ -409,11 +558,41 @@
             const currentPriceCell = row.querySelector('.current-price');
             const plCell = row.querySelector('.pl-value');
             
-            // Fetch latest price data with caching and rate limiting
-            const stockData = await getStockDataWithCache(stock.symbol);
+            // Try to fetch the latest price data
+            const yahooSymbol = `${stock.symbol.split('.')[0]}`;
+            let stockData = null;
             
-            if (stockData && stockData.currentPrice) {
-                const currentPrice = stockData.currentPrice;
+            // First check if it's a common stock with static data
+            const staticResponse = await fetch(`/api/stock-data?symbol=${yahooSymbol}&static_only=true&_t=${Date.now()}`);
+            if (staticResponse.ok) {
+                const staticData = await staticResponse.json();
+                if (staticData.success) {
+                    stockData = staticData;
+                }
+            }
+            
+            // If no static data, try Yahoo Finance API directly
+            if (!stockData) {
+                // Try with NSE extension first
+                stockData = await tryYahooFinanceSymbol(`${yahooSymbol}.NS`);
+                
+                // If NSE fails, try BSE
+                if (!stockData) {
+                    stockData = await tryYahooFinanceSymbol(`${yahooSymbol}.BO`);
+                }
+                
+                // If direct API fails, fall back to server API
+                if (!stockData) {
+                    // Fall back to our cached/server data
+                    const fallbackResponse = await fetch(`/api/stock-data?symbol=${yahooSymbol}&_t=${Date.now()}`);
+                    if (fallbackResponse.ok) {
+                        stockData = await fallbackResponse.json();
+                    }
+                }
+            }
+            
+            if (stockData && stockData.success) {
+                const currentPrice = stockData.current_price || stockData.currentPrice;
                 
                 // Calculate values
                 const buyPrice = stock.buyPrice;
@@ -593,46 +772,6 @@
     const modal = document.getElementById('stockModal');
     const stockForm = document.getElementById('stockForm');
     let isEditing = false;
-
-    // Fetch stock information
-    window.fetchStockInfo = async function() {
-        const symbol = document.getElementById('stockSymbol').value.trim();
-        if (!symbol) {
-            alert('Please enter a stock symbol');
-            return;
-        }
-
-        try {
-            // Show loading state
-            document.getElementById('stockName').value = "Loading...";
-            document.getElementById('currentPrice').value = "";
-            
-            // Use the more robust /api/stock-data endpoint instead of /get_stock_info
-            const timestamp = Date.now(); // Add cache-busting
-            const response = await fetch(`/api/stock-data?symbol=${symbol}&_t=${timestamp}`);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const data = await response.json();
-
-            if (data.success) {
-                document.getElementById('stockName').value = data.company_name || `${symbol} Stock`;
-                document.getElementById('currentPrice').value = data.current_price || 0;
-            } else {
-                // Fallback to default values if API fails
-                document.getElementById('stockName').value = `${symbol} Stock`;
-                document.getElementById('currentPrice').value = 0;
-                console.warn(`Using fallback data for ${symbol}`);
-            }
-        } catch (error) {
-            console.error('Error fetching stock information:', error);
-            // Provide usable fallback values even on error
-            document.getElementById('stockName').value = `${symbol} Stock`;
-            document.getElementById('currentPrice').value = 0;
-        }
-    }
 
     // Open modal for adding new stock
     window.openAddStockModal = function() {

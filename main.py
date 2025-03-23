@@ -376,8 +376,23 @@ def firebase_config():
 def get_stock_data_api():
     """API endpoint to get stock data"""
     symbol = request.args.get('symbol', '').upper().strip()
+    static_only = request.args.get('static_only') == 'true'
+    
     if not symbol:
         return jsonify({"success": False, "error": "Symbol is required"})
+    
+    # Extract base symbol without extension
+    base_symbol = symbol.split('.')[0]
+    
+    # If static_only flag is set, only return from the fallback data
+    if static_only:
+        if base_symbol in FALLBACK_STOCKS:
+            print(f"Providing static data for {base_symbol} (client-side request)")
+            result = FALLBACK_STOCKS[base_symbol].copy()
+            result['success'] = True
+            return jsonify(result)
+        else:
+            return jsonify({"success": False, "error": "No static data available"})
     
     # Use the enhanced stock data fetching function
     result = get_stock_data(symbol)
