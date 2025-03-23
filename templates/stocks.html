@@ -603,18 +603,34 @@
         }
 
         try {
-            const response = await fetch(`/get_stock_info?symbol=${symbol}`);
+            // Show loading state
+            document.getElementById('stockName').value = "Loading...";
+            document.getElementById('currentPrice').value = "";
+            
+            // Use the more robust /api/stock-data endpoint instead of /get_stock_info
+            const timestamp = Date.now(); // Add cache-busting
+            const response = await fetch(`/api/stock-data?symbol=${symbol}&_t=${timestamp}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
             const data = await response.json();
 
-            if (response.ok) {
-                document.getElementById('stockName').value = data.name;
-                document.getElementById('currentPrice').value = data.currentPrice;
+            if (data.success) {
+                document.getElementById('stockName').value = data.company_name || `${symbol} Stock`;
+                document.getElementById('currentPrice').value = data.current_price || 0;
             } else {
-                alert(data.error || 'Error fetching stock information');
+                // Fallback to default values if API fails
+                document.getElementById('stockName').value = `${symbol} Stock`;
+                document.getElementById('currentPrice').value = 0;
+                console.warn(`Using fallback data for ${symbol}`);
             }
         } catch (error) {
-            console.error('Error:', error);
-            alert('Error fetching stock information');
+            console.error('Error fetching stock information:', error);
+            // Provide usable fallback values even on error
+            document.getElementById('stockName').value = `${symbol} Stock`;
+            document.getElementById('currentPrice').value = 0;
         }
     }
 

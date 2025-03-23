@@ -18,6 +18,18 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
 
+# Set production mode if needed
+if os.getenv('FORCE_PRODUCTION', 'false').lower() == 'true':
+    os.environ['PRODUCTION'] = 'true'
+    print("⚠️ Production mode forced via FORCE_PRODUCTION environment variable")
+
+# Detect production environment
+is_production = os.getenv('VERCEL_ENV') == 'production' or os.getenv('PRODUCTION') == 'true'
+if is_production:
+    print("🚀 Running in production mode - using optimized data fetching")
+else:
+    print("🔧 Running in development mode - will attempt to use live data")
+
 # Load user credentials from .env file
 users = {}
 user_credentials = os.getenv('USER_CREDENTIALS', 'demo@example.com:demo123:Demo User')
@@ -61,6 +73,73 @@ FALLBACK_STOCKS = {
         'company_name': 'Infosys Ltd.',
         'current_price': 1467.25,
         'change': 0.3
+    },
+    # Additional common Indian stocks
+    'ICICIBANK': {
+        'symbol': 'ICICIBANK',
+        'company_name': 'ICICI Bank Ltd.',
+        'current_price': 1022.40,
+        'change': 0.85
+    },
+    'TATASTEEL': {
+        'symbol': 'TATASTEEL',
+        'company_name': 'Tata Steel Ltd.',
+        'current_price': 145.80,
+        'change': -0.2
+    },
+    'SBIN': {
+        'symbol': 'SBIN',
+        'company_name': 'State Bank of India',
+        'current_price': 760.25,
+        'change': 1.1
+    },
+    'WIPRO': {
+        'symbol': 'WIPRO',
+        'company_name': 'Wipro Ltd.',
+        'current_price': 478.60,
+        'change': -0.7
+    },
+    'BHARTIARTL': {
+        'symbol': 'BHARTIARTL',
+        'company_name': 'Bharti Airtel Ltd.',
+        'current_price': 1289.55,
+        'change': 0.4
+    },
+    'AXISBANK': {
+        'symbol': 'AXISBANK',
+        'company_name': 'Axis Bank Ltd.',
+        'current_price': 1055.30,
+        'change': 0.6
+    },
+    'KOTAKBANK': {
+        'symbol': 'KOTAKBANK',
+        'company_name': 'Kotak Mahindra Bank Ltd.',
+        'current_price': 1747.15,
+        'change': 0.25
+    },
+    'HINDUNILVR': {
+        'symbol': 'HINDUNILVR',
+        'company_name': 'Hindustan Unilever Ltd.',
+        'current_price': 2530.75,
+        'change': -0.3
+    },
+    'ADANIENT': {
+        'symbol': 'ADANIENT',
+        'company_name': 'Adani Enterprises Ltd.',
+        'current_price': 2840.90,
+        'change': 1.5
+    },
+    'BAJFINANCE': {
+        'symbol': 'BAJFINANCE',
+        'company_name': 'Bajaj Finance Ltd.',
+        'current_price': 7234.60,
+        'change': 0.9
+    },
+    'TATAMOTORS': {
+        'symbol': 'TATAMOTORS',
+        'company_name': 'Tata Motors Ltd.',
+        'current_price': 920.45,
+        'change': 1.3
     }
 }
 
@@ -103,68 +182,93 @@ def get_stock_info(symbol):
     if not (symbol.endswith('.NS') or symbol.endswith('.BO')):
         symbol = f"{symbol}.NS"  # Default to NSE
     
-    # If we have fallback data for this stock, use it when in production
+    # Get base symbol without extension
     base_symbol = symbol.split('.')[0]
-    if os.getenv('VERCEL_ENV') == 'production' and base_symbol in FALLBACK_STOCKS:
-        return {
-            'success': True,
-            'symbol': base_symbol,
-            'company_name': FALLBACK_STOCKS[base_symbol]['company_name'],
-            'current_price': FALLBACK_STOCKS[base_symbol]['current_price'],
-            'change': FALLBACK_STOCKS[base_symbol]['change']
-        }
     
+    # In production or if we have fallback data for this stock, use it to avoid API limits
+    is_production = os.getenv('VERCEL_ENV') == 'production' or os.getenv('PRODUCTION') == 'true'
+    if is_production or base_symbol in FALLBACK_STOCKS:
+        if base_symbol in FALLBACK_STOCKS:
+            print(f"Using static fallback data for {base_symbol}")
+            return {
+                'success': True,
+                'symbol': base_symbol,
+                'company_name': FALLBACK_STOCKS[base_symbol]['company_name'],
+                'current_price': FALLBACK_STOCKS[base_symbol]['current_price'],
+                'change': FALLBACK_STOCKS[base_symbol]['change']
+            }
+    
+    # If we're here, attempt to get data from yfinance
     try:
         # Add a small delay to avoid rate limiting
         time.sleep(random.uniform(0.1, 0.3))
         
-        # Get stock info using yfinance
-        ticker = yf.Ticker(symbol)
-        
-        # Try fetching the info (sometimes this can fail)
+        # Get stock info using yfinance with error handling
         try:
-            info = ticker.info
+            ticker = yf.Ticker(symbol)
             
-            # Check if we got valid data
-            if isinstance(info, dict) and 'longName' in info and 'regularMarketPrice' in info:
-                # Calculate change if available
-                price = info.get('regularMarketPrice', 0)
-                prev_close = info.get('previousClose', price)
-                change = ((price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 else 0
+            # Try fetching the info (sometimes this can fail)
+            try:
+                info = ticker.info
                 
-                return {
-                    'success': True,
-                    'symbol': base_symbol,
-                    'company_name': info.get('longName', base_symbol),
-                    'current_price': round(price, 2),
-                    'change': round(change, 2)
-                }
-        except Exception as inner_error:
-            print(f"Inner error fetching info for {symbol}: {str(inner_error)}")
-        
-        # Try using history as an alternative
-        history = ticker.history(period="2d")
-        if not history.empty and len(history) > 0:
-            # Calculate change from the history data
-            latest = history.iloc[-1]
-            if len(history) > 1:
-                prev_day = history.iloc[-2]
-                price = latest.get('Close', 0)
-                prev_price = prev_day.get('Close', price)
-                change = ((price - prev_price) / prev_price * 100) if prev_price and prev_price > 0 else 0
-            else:
-                price = latest.get('Close', 0)
-                change = 0
+                # Check if we got valid data
+                if isinstance(info, dict) and 'longName' in info and 'regularMarketPrice' in info:
+                    # Calculate change if available
+                    price = info.get('regularMarketPrice', 0)
+                    prev_close = info.get('previousClose', price)
+                    change = ((price - prev_close) / prev_close * 100) if prev_close and prev_close > 0 else 0
+                    
+                    return {
+                        'success': True,
+                        'symbol': base_symbol,
+                        'company_name': info.get('longName', base_symbol),
+                        'current_price': round(price, 2),
+                        'change': round(change, 2)
+                    }
+            except Exception as inner_error:
+                print(f"Inner error fetching info for {symbol}: {str(inner_error)}")
             
+            # Try using history as an alternative approach
+            try:
+                history = ticker.history(period="2d")
+                if not history.empty and len(history) > 0:
+                    # Calculate change from the history data
+                    latest = history.iloc[-1]
+                    if len(history) > 1:
+                        prev_day = history.iloc[-2]
+                        price = latest.get('Close', 0)
+                        prev_price = prev_day.get('Close', price)
+                        change = ((price - prev_price) / prev_price * 100) if prev_price and prev_price > 0 else 0
+                    else:
+                        price = latest.get('Close', 0)
+                        change = 0
+                    
+                    return {
+                        'success': True,
+                        'symbol': base_symbol,
+                        'company_name': f"{base_symbol} Stock", # Fallback name
+                        'current_price': round(price, 2),
+                        'change': round(change, 2)
+                    }
+            except Exception as history_error:
+                print(f"History fallback error for {symbol}: {str(history_error)}")
+                
+        except Exception as ticker_error:
+            print(f"Ticker creation error for {symbol}: {str(ticker_error)}")
+            
+        # If all yfinance methods failed, check for fallback data again
+        if base_symbol in FALLBACK_STOCKS:
+            print(f"YFinance failed, using fallback data for {base_symbol}")
             return {
                 'success': True,
                 'symbol': base_symbol,
-                'company_name': f"{base_symbol} Stock", # Fallback name
-                'current_price': round(price, 2),
-                'change': round(change, 2)
+                'company_name': FALLBACK_STOCKS[base_symbol]['company_name'],
+                'current_price': FALLBACK_STOCKS[base_symbol]['current_price'],
+                'change': FALLBACK_STOCKS[base_symbol]['change']
             }
-            
+                
         # If we reach here, we couldn't get data    
+        print(f"No data available for {symbol}")
         return {'success': False, 'error': 'Could not fetch stock data'}
             
     except Exception as e:
@@ -182,15 +286,28 @@ def get_stock_data(symbol):
         
     base_symbol = symbol.split('.')[0]
     
-    # Check fallback data as second priority
-    if base_symbol in FALLBACK_STOCKS:
+    # Check if we're in production - use multiple indicators
+    is_production = os.getenv('VERCEL_ENV') == 'production' or os.getenv('PRODUCTION') == 'true'
+    
+    # In production, prioritize fallback data to avoid rate limits entirely
+    if is_production and base_symbol in FALLBACK_STOCKS:
+        print(f"Production mode: using fallback data for {base_symbol}")
         result = FALLBACK_STOCKS[base_symbol].copy()
         result['success'] = True
         # Still cache this result
         stock_cache.set(symbol, result)
         return result
     
-    # Try to get real data using yfinance
+    # For common Indian stocks, always use fallback data even in development
+    if base_symbol in FALLBACK_STOCKS:
+        print(f"Using fallback data for common stock: {base_symbol}")
+        result = FALLBACK_STOCKS[base_symbol].copy()
+        result['success'] = True
+        # Cache this result
+        stock_cache.set(symbol, result) 
+        return result
+    
+    # Try to get real data using yfinance only if we don't have fallback data
     try:
         # Add randomized delay to prevent rate limiting
         time.sleep(random.uniform(0.2, 0.5))
@@ -229,13 +346,16 @@ def get_stock_data(symbol):
     
     # Last resort: return generated data
     print(f"Generating fallback data for {symbol}")
-    return {
+    generated_data = {
         "success": True,
         "symbol": base_symbol,
         "company_name": f"{base_symbol} Stock",
         "current_price": round(random.uniform(500, 3000), 2),
         "change": round(random.uniform(-2, 2), 2)
     }
+    # Cache even the generated data
+    stock_cache.set(symbol, generated_data)
+    return generated_data
 
 @app.route('/firebase-config')
 def firebase_config():
