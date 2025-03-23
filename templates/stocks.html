@@ -31,7 +31,7 @@
             <div class="bg-white/10 rounded-xl p-6 backdrop-blur-lg">
                 <p class="text-purple-100 text-sm font-medium">Total Family Value</p>
                 <h3 class="text-3xl font-bold mt-2" id="totalFamilyValue">₹0</h3>
-            </div>
+                    </div>
             <div class="bg-white/10 rounded-xl p-6 backdrop-blur-lg">
                 <p class="text-purple-100 text-sm font-medium">Total Family P/L</p>
                 <h3 class="text-3xl font-bold mt-2" id="totalFamilyPL">₹0</h3>
@@ -86,9 +86,9 @@
                     <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                     </svg>
-                </div>
-            </div>
         </div>
+    </div>
+</div>
 
         <!-- Total P/L Card -->
         <div class="bg-white rounded-2xl shadow-lg p-6 transform transition-all duration-300 hover:scale-105 border border-gray-100">
@@ -214,6 +214,59 @@
     const stocksCollection = collection(window.db, "stocks");
     window.stocksCollection = stocksCollection;
 
+    // Rate limiting and caching utilities
+    const CACHE_DURATION = 60000; // 1 minute cache
+    const REQUEST_DELAY = 1000; // 1 second delay between requests
+    const stockPriceCache = new Map();
+    let lastRequestTime = 0;
+
+    // Function to check if cache is valid
+    function isCacheValid(cacheEntry) {
+        return cacheEntry && (Date.now() - cacheEntry.timestamp) < CACHE_DURATION;
+    }
+
+    // Function to get stock data with rate limiting and caching
+    async function getStockDataWithCache(symbol) {
+        // Check cache first
+        const cachedData = stockPriceCache.get(symbol);
+        if (isCacheValid(cachedData)) {
+            return cachedData.data;
+        }
+
+        // Implement rate limiting
+        const now = Date.now();
+        const timeElapsed = now - lastRequestTime;
+        if (timeElapsed < REQUEST_DELAY) {
+            await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY - timeElapsed));
+        }
+
+        try {
+            const response = await fetch(`/get_stock_info?symbol=${symbol}`);
+            lastRequestTime = Date.now();
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch stock data');
+            }
+
+            const data = await response.json();
+            
+            // Cache the result
+            stockPriceCache.set(symbol, {
+                data: data,
+                timestamp: Date.now()
+            });
+
+            return data;
+        } catch (error) {
+            console.error(`Error fetching data for ${symbol}:`, error);
+            // Return last known price from cache if available
+            if (cachedData) {
+                return cachedData.data;
+            }
+            throw error;
+        }
+    }
+
     // Function to load stocks from Firestore
     async function loadStocks() {
         try {
@@ -225,36 +278,67 @@
             let totalInvestment = 0;
             let currentValue = 0;
 
+            // Process stocks in batches to avoid rate limits
+            const stocks = [];
             querySnapshot.forEach((doc) => {
                 const stock = doc.data();
-                // Only show stocks for the selected family member
                 if (stock.familyMember === selectedMember) {
+                    stocks.push({ ...stock, id: doc.id });
+                }
+            });
+
+            // Update UI with loading state
+            stocks.forEach(stock => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-id', stock.id);
+                row.setAttribute('data-symbol', stock.symbol);
+                row.classList.add('hover:bg-gray-50', 'transition-colors', 'duration-200');
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${stock.symbol}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${stock.stockName}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${stock.quantity}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">₹${stock.buyPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 current-price">
+                        <div class="animate-pulse bg-gray-200 h-5 w-20 rounded"></div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm pl-value">
+                        <div class="animate-pulse bg-gray-200 h-5 w-24 rounded"></div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <button onclick="editStock('${stock.id}')" class="text-indigo-600 hover:text-indigo-900 mr-3 transition-colors duration-200">Edit</button>
+                        <button onclick="deleteStock('${stock.id}')" class="text-red-600 hover:text-red-900 transition-colors duration-200">Delete</button>
+                    </td>
+                `;
+                stocksTableBody.appendChild(row);
+            });
+
+            // Update prices sequentially to avoid rate limits
+            for (const stock of stocks) {
+                try {
+                    const row = document.querySelector(`tr[data-id="${stock.id}"]`);
+                    if (!row) continue;
+
+                    const currentPriceCell = row.querySelector('.current-price');
+                    const plCell = row.querySelector('.pl-value');
+                    
+                    const stockData = await getStockDataWithCache(stock.symbol);
+                    const currentPrice = stockData.currentPrice;
+                    
                     const investment = stock.buyPrice * stock.quantity;
-                    const value = stock.currentPrice * stock.quantity;
+                    const value = currentPrice * stock.quantity;
                     const pl = value - investment;
                     
                     totalInvestment += investment;
                     currentValue += value;
 
-                    const row = `
-                        <tr data-id="${doc.id}" data-symbol="${stock.symbol}" class="hover:bg-gray-50 transition-colors duration-200">
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${stock.symbol}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${stock.stockName}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${stock.quantity}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">₹${stock.buyPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 current-price">₹${stock.currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}">
-                                ${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                <button onclick="editStock('${doc.id}')" class="text-indigo-600 hover:text-indigo-900 mr-3 transition-colors duration-200">Edit</button>
-                                <button onclick="deleteStock('${doc.id}')" class="text-red-600 hover:text-red-900 transition-colors duration-200">Delete</button>
-                            </td>
-                        </tr>
-                    `;
-                    stocksTableBody.innerHTML += row;
+                    currentPriceCell.innerHTML = `₹${currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                    plCell.innerHTML = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                    plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
+                } catch (error) {
+                    console.error(`Error updating price for ${stock.symbol}:`, error);
+                    // Keep showing loading state for failed updates
                 }
-            });
+            }
 
             // Update summary cards
             document.getElementById('totalInvestment').textContent = `₹${totalInvestment.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
@@ -271,7 +355,7 @@
         }
     }
 
-    // Function to update current prices
+    // Function to update current prices with rate limiting
     async function updateCurrentPrices() {
         try {
             const rows = document.querySelectorAll('#stocksTableBody tr');
@@ -279,10 +363,8 @@
                 const symbol = row.getAttribute('data-symbol');
                 if (!symbol) continue;
 
-                const response = await fetch(`/get_stock_info?symbol=${symbol}`);
-                const data = await response.json();
-
-                if (response.ok) {
+                try {
+                    const data = await getStockDataWithCache(symbol);
                     const currentPriceCell = row.querySelector('.current-price');
                     const plCell = row.querySelector('.pl-value');
                     
@@ -296,6 +378,10 @@
                         plCell.textContent = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
                         plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
                     }
+                } catch (error) {
+                    console.error(`Error updating price for ${symbol}:`, error);
+                    // Skip failed updates and continue with next stock
+                    continue;
                 }
             }
 
@@ -378,11 +464,11 @@
     window.updatePortfolioSummary = updatePortfolioSummary;
     window.updateFamilyPortfolioSummary = updateFamilyPortfolioSummary;
 
-    // Load stocks when page loads
+    // Load stocks when page loads and set up auto-refresh with longer interval
     document.addEventListener('DOMContentLoaded', () => {
         loadStocks();
-        // Set up auto-refresh every minute
-        setInterval(updateCurrentPrices, 60000);
+        // Set up auto-refresh every 2 minutes instead of 1 minute
+        setInterval(updateCurrentPrices, 120000);
     });
 
     // Add event listener for family member selection
