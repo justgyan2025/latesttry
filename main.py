@@ -9,6 +9,8 @@ from datetime import datetime
 import yfinance as yf
 import time
 import random
+import threading
+from functools import lru_cache
 
 # Load environment variables
 load_dotenv()
@@ -61,6 +63,39 @@ FALLBACK_STOCKS = {
         'change': 0.3
     }
 }
+
+# Server-side caching for stock data
+# Create a thread-safe cache with expiration
+class ExpiringCache:
+    def __init__(self):
+        self.cache = {}
+        self.lock = threading.Lock()
+        
+    def get(self, key):
+        with self.lock:
+            if key in self.cache:
+                item = self.cache[key]
+                if time.time() - item['timestamp'] < 3600:  # 1 hour cache
+                    return item['data']
+                # Expired but keep for emergency fallback
+            return None
+            
+    def set(self, key, value):
+        with self.lock:
+            self.cache[key] = {
+                'data': value,
+                'timestamp': time.time()
+            }
+            
+    def get_stale(self, key):
+        # Return even expired data as emergency fallback
+        with self.lock:
+            if key in self.cache:
+                return self.cache[key]['data']
+            return None
+
+# Initialize the cache
+stock_cache = ExpiringCache()
 
 def get_stock_info(symbol):
     """Use yfinance to fetch stock data for NSE and BSE stocks"""
@@ -136,6 +171,72 @@ def get_stock_info(symbol):
         print(f"Error fetching stock data for {symbol}: {str(e)}")
         return {'success': False, 'error': str(e)}
 
+# Enhanced stock data fetching with better error handling
+def get_stock_data(symbol):
+    """API endpoint to get stock data with improved caching and rate limiting"""
+    # Check cache first
+    cached_data = stock_cache.get(symbol)
+    if cached_data:
+        print(f"Cache hit for {symbol}")
+        return cached_data
+        
+    base_symbol = symbol.split('.')[0]
+    
+    # Check fallback data as second priority
+    if base_symbol in FALLBACK_STOCKS:
+        result = FALLBACK_STOCKS[base_symbol].copy()
+        result['success'] = True
+        # Still cache this result
+        stock_cache.set(symbol, result)
+        return result
+    
+    # Try to get real data using yfinance
+    try:
+        # Add randomized delay to prevent rate limiting
+        time.sleep(random.uniform(0.2, 0.5))
+        
+        # Format symbol properly for Yahoo Finance
+        if not (symbol.endswith('.NS') or symbol.endswith('.BO')):
+            yahoo_symbol = f"{symbol}.NS"  # Default to NSE
+        else:
+            yahoo_symbol = symbol
+            
+        print(f"Fetching data for {yahoo_symbol} from Yahoo Finance")
+        result = get_stock_info(yahoo_symbol)
+        
+        # Cache successful results
+        if result['success']:
+            stock_cache.set(symbol, result)
+            return result
+            
+        # If NSE fails, try BSE
+        if yahoo_symbol.endswith('.NS'):
+            bse_symbol = f"{base_symbol}.BO"
+            print(f"NSE failed, trying BSE: {bse_symbol}")
+            time.sleep(random.uniform(0.2, 0.5))  # Additional delay
+            result = get_stock_info(bse_symbol)
+            if result['success']:
+                stock_cache.set(symbol, result)
+                return result
+    
+    except Exception as e:
+        print(f"Error fetching stock data for {symbol}: {str(e)}")
+        # Try to get stale data from cache
+        stale_data = stock_cache.get_stale(symbol)
+        if stale_data:
+            print(f"Using stale data for {symbol}")
+            return stale_data
+    
+    # Last resort: return generated data
+    print(f"Generating fallback data for {symbol}")
+    return {
+        "success": True,
+        "symbol": base_symbol,
+        "company_name": f"{base_symbol} Stock",
+        "current_price": round(random.uniform(500, 3000), 2),
+        "change": round(random.uniform(-2, 2), 2)
+    }
+
 @app.route('/firebase-config')
 def firebase_config():
     """Return Firebase configuration as JSON for client-side initialization"""
@@ -152,32 +253,14 @@ def firebase_config():
 
 @app.route('/api/stock-data')
 @login_required
-def get_stock_data():
+def get_stock_data_api():
     """API endpoint to get stock data"""
     symbol = request.args.get('symbol', '').upper().strip()
     if not symbol:
         return jsonify({"success": False, "error": "Symbol is required"})
     
-    # Remove extension if present and check fallback data
-    base_symbol = symbol.split('.')[0]
-    if base_symbol in FALLBACK_STOCKS:
-        result = FALLBACK_STOCKS[base_symbol].copy()
-        result['success'] = True
-        return jsonify(result)
-    
-    # Try to get real data
-    result = get_stock_info(symbol)
-    
-    # If failed, return a fallback result
-    if not result['success']:
-        return jsonify({
-            "success": True,
-            "symbol": base_symbol,
-            "company_name": f"{base_symbol} Stock",
-            "current_price": round(random.uniform(500, 3000), 2),
-            "change": round(random.uniform(-2, 2), 2)
-        })
-    
+    # Use the enhanced stock data fetching function
+    result = get_stock_data(symbol)
     return jsonify(result)
 
 @app.route('/get_stock_info')

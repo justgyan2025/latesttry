@@ -215,10 +215,12 @@
     window.stocksCollection = stocksCollection;
 
     // Rate limiting and caching utilities
-    const CACHE_DURATION = 60000; // 1 minute cache
-    const REQUEST_DELAY = 1000; // 1 second delay between requests
+    const CACHE_DURATION = 3600000; // 1 hour cache (increased from 1 minute)
+    const REQUEST_DELAY = 2000; // 2 second delay between requests (increased from 1 second)
+    const BATCH_SIZE = 3; // Process stocks in smaller batches
     const stockPriceCache = new Map();
     let lastRequestTime = 0;
+    let requestQueue = Promise.resolve(); // For sequential requests
 
     // Function to check if cache is valid
     function isCacheValid(cacheEntry) {
@@ -227,47 +229,67 @@
 
     // Function to get stock data with rate limiting and caching
     async function getStockDataWithCache(symbol) {
-        // Check cache first
+        // Check cache first - highest priority
         const cachedData = stockPriceCache.get(symbol);
         if (isCacheValid(cachedData)) {
             return cachedData.data;
         }
 
-        // Implement rate limiting
-        const now = Date.now();
-        const timeElapsed = now - lastRequestTime;
-        if (timeElapsed < REQUEST_DELAY) {
-            await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY - timeElapsed));
-        }
+        // Queue this request to ensure sequential processing
+        return new Promise((resolve, reject) => {
+            requestQueue = requestQueue
+                .then(async () => {
+                    // Double-check cache again in case it was filled while waiting
+                    const cachedData = stockPriceCache.get(symbol);
+                    if (isCacheValid(cachedData)) {
+                        resolve(cachedData.data);
+                        return;
+                    }
 
-        try {
-            const response = await fetch(`/get_stock_info?symbol=${symbol}`);
-            lastRequestTime = Date.now();
+                    // Implement rate limiting with exponential backoff
+                    const now = Date.now();
+                    const timeElapsed = now - lastRequestTime;
+                    if (timeElapsed < REQUEST_DELAY) {
+                        await new Promise(r => setTimeout(r, REQUEST_DELAY - timeElapsed + Math.random() * 500));
+                    }
 
-            if (!response.ok) {
-                throw new Error('Failed to fetch stock data');
-            }
+                    try {
+                        // Adding a random query param to avoid caching
+                        const timestamp = Date.now();
+                        const response = await fetch(`/api/stock-data?symbol=${symbol}&_t=${timestamp}`);
+                        lastRequestTime = Date.now();
 
-            const data = await response.json();
-            
-            // Cache the result
-            stockPriceCache.set(symbol, {
-                data: data,
-                timestamp: Date.now()
-            });
+                        if (!response.ok) {
+                            throw new Error(`Failed to fetch stock data: ${response.status}`);
+                        }
 
-            return data;
-        } catch (error) {
-            console.error(`Error fetching data for ${symbol}:`, error);
-            // Return last known price from cache if available
-            if (cachedData) {
-                return cachedData.data;
-            }
-            throw error;
-        }
+                        const data = await response.json();
+                        
+                        // Cache the result
+                        stockPriceCache.set(symbol, {
+                            data: data,
+                            timestamp: Date.now()
+                        });
+
+                        resolve(data);
+                    } catch (error) {
+                        console.error(`Error fetching data for ${symbol}:`, error);
+                        // Return last known price from cache if available
+                        if (cachedData) {
+                            console.log(`Using stale cache for ${symbol}`);
+                            resolve(cachedData.data);
+                        } else {
+                            reject(error);
+                        }
+                    }
+                })
+                .catch(error => {
+                    reject(error);
+                });
+        });
     }
 
-    // Function to load stocks from Firestore
+    // Function to load stocks from Firestore with optimized data fetching
     async function loadStocks() {
         try {
             const selectedMember = document.getElementById('familyMemberSelect').value;
@@ -312,18 +334,20 @@
                 stocksTableBody.appendChild(row);
             });
 
-            // Update prices sequentially to avoid rate limits
+            // Use the current prices from Firestore for initial display
+            // This avoids hitting API limits on page load
             for (const stock of stocks) {
                 try {
                     const row = document.querySelector(`tr[data-id="${stock.id}"]`);
                     if (!row) continue;
-
+                    
                     const currentPriceCell = row.querySelector('.current-price');
                     const plCell = row.querySelector('.pl-value');
                     
-                    const stockData = await getStockDataWithCache(stock.symbol);
-                    const currentPrice = stockData.currentPrice;
+                    // Initially use the stored price without API call
+                    const currentPrice = stock.currentPrice;
                     
+                    // Update display
                     const investment = stock.buyPrice * stock.quantity;
                     const value = currentPrice * stock.quantity;
                     const pl = value - investment;
@@ -335,53 +359,143 @@
                     plCell.innerHTML = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
                     plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
                 } catch (error) {
-                    console.error(`Error updating price for ${stock.symbol}:`, error);
-                    // Keep showing loading state for failed updates
+                    console.error(`Error displaying price for ${stock.symbol}:`, error);
                 }
             }
 
-            // Update summary cards
-            document.getElementById('totalInvestment').textContent = `₹${totalInvestment.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
-            document.getElementById('currentValue').textContent = `₹${currentValue.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+            // Update summary cards with initial values
+            updateSummaryCards(totalInvestment, currentValue);
             
-            const totalPL = currentValue - totalInvestment;
-            const plElement = document.getElementById('totalPL');
-            plElement.textContent = `${totalPL >= 0 ? '+' : ''}₹${totalPL.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
-            plElement.className = `text-3xl font-bold mt-2 ${totalPL >= 0 ? 'text-green-600' : 'text-red-600'}`;
-
+            // Then update prices in small batches with delays
+            updateStockPricesInBatches(stocks);
         } catch (error) {
             console.error("Error loading stocks: ", error);
             alert("Error loading stocks. Please try again.");
         }
     }
 
-    // Function to update current prices with rate limiting
+    // Function to update stock prices in batches
+    async function updateStockPricesInBatches(stocks) {
+        // Process in smaller batches with longer delays between batches
+        for (let i = 0; i < stocks.length; i += BATCH_SIZE) {
+            const batch = stocks.slice(i, i + BATCH_SIZE);
+            
+            // Process this batch
+            await Promise.all(batch.map(async (stock) => {
+                try {
+                    await updateStockPrice(stock);
+                } catch (error) {
+                    console.error(`Failed to update ${stock.symbol}:`, error);
+                }
+            }));
+            
+            // Longer delay between batches to avoid rate limiting
+            if (i + BATCH_SIZE < stocks.length) {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
+        
+        // After all batches complete, update the summaries
+        await updatePortfolioSummary();
+        await updateFamilyPortfolioSummary();
+    }
+
+    // Function to update a single stock price
+    async function updateStockPrice(stock) {
+        try {
+            const row = document.querySelector(`tr[data-id="${stock.id}"]`);
+            if (!row) return;
+
+            const currentPriceCell = row.querySelector('.current-price');
+            const plCell = row.querySelector('.pl-value');
+            
+            // Fetch latest price data with caching and rate limiting
+            const stockData = await getStockDataWithCache(stock.symbol);
+            
+            if (stockData && stockData.currentPrice) {
+                const currentPrice = stockData.currentPrice;
+                
+                // Calculate values
+                const buyPrice = stock.buyPrice;
+                const quantity = stock.quantity;
+                const pl = (currentPrice - buyPrice) * quantity;
+
+                // Update display
+                currentPriceCell.innerHTML = `₹${currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                plCell.innerHTML = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
+                
+                // Update stock in Firestore with latest price (if significantly different)
+                if (Math.abs(currentPrice - stock.currentPrice) / stock.currentPrice > 0.01) { // 1% change threshold
+                    await window.firebaseUtils.updateDoc(
+                        window.firebaseUtils.doc(window.db, "stocks", stock.id),
+                        { currentPrice: currentPrice }
+                    );
+                }
+            }
+        } catch (error) {
+            console.error(`Error updating price for ${stock.symbol}:`, error);
+            // Keep the existing price data
+        }
+    }
+
+    // Helper function to update summary cards
+    function updateSummaryCards(totalInvestment, currentValue) {
+        document.getElementById('totalInvestment').textContent = `₹${totalInvestment.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+        document.getElementById('currentValue').textContent = `₹${currentValue.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+        
+        const totalPL = currentValue - totalInvestment;
+        const plElement = document.getElementById('totalPL');
+        plElement.textContent = `${totalPL >= 0 ? '+' : ''}₹${totalPL.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+        plElement.className = `text-3xl font-bold mt-2 ${totalPL >= 0 ? 'text-green-600' : 'text-red-600'}`;
+    }
+
+    // Function to update current prices with improved rate limiting
     async function updateCurrentPrices() {
         try {
             const rows = document.querySelectorAll('#stocksTableBody tr');
-            for (const row of rows) {
+            const stocks = [];
+            
+            // Collect all stocks that need updating
+            rows.forEach(row => {
+                const id = row.getAttribute('data-id');
                 const symbol = row.getAttribute('data-symbol');
-                if (!symbol) continue;
+                if (id && symbol) {
+                    stocks.push({ id, symbol, row });
+                }
+            });
+            
+            // Update in batches
+            for (let i = 0; i < stocks.length; i += BATCH_SIZE) {
+                const batch = stocks.slice(i, i + BATCH_SIZE);
+                
+                // Process batch
+                await Promise.all(batch.map(async (stock) => {
+                    try {
+                        const data = await getStockDataWithCache(stock.symbol);
+                        const row = stock.row;
+                        
+                        const currentPriceCell = row.querySelector('.current-price');
+                        const plCell = row.querySelector('.pl-value');
+                        
+                        if (currentPriceCell && plCell) {
+                            const currentPrice = data.currentPrice;
+                            const buyPrice = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('₹', '').replace(/,/g, ''));
+                            const quantity = parseInt(row.querySelector('td:nth-child(3)').textContent);
+                            const pl = (currentPrice - buyPrice) * quantity;
 
-                try {
-                    const data = await getStockDataWithCache(symbol);
-                    const currentPriceCell = row.querySelector('.current-price');
-                    const plCell = row.querySelector('.pl-value');
-                    
-                    if (currentPriceCell && plCell) {
-                        const currentPrice = data.currentPrice;
-                        const buyPrice = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('₹', '').replace(/,/g, ''));
-                        const quantity = parseInt(row.querySelector('td:nth-child(3)').textContent);
-                        const pl = (currentPrice - buyPrice) * quantity;
-
-                        currentPriceCell.textContent = `₹${currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
-                        plCell.textContent = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
-                        plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
+                            currentPriceCell.textContent = `₹${currentPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                            plCell.textContent = `${pl >= 0 ? '+' : ''}₹${pl.toLocaleString('en-IN', {maximumFractionDigits: 2})}`;
+                            plCell.className = `px-6 py-4 whitespace-nowrap text-sm pl-value ${pl >= 0 ? 'text-green-600' : 'text-red-600'}`;
+                        }
+                    } catch (error) {
+                        console.error(`Error updating price for ${stock.symbol}:`, error);
                     }
-                } catch (error) {
-                    console.error(`Error updating price for ${symbol}:`, error);
-                    // Skip failed updates and continue with next stock
-                    continue;
+                }));
+                
+                // Delay between batches
+                if (i + BATCH_SIZE < stocks.length) {
+                    await new Promise(r => setTimeout(r, 5000));
                 }
             }
 
